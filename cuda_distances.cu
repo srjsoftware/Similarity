@@ -61,7 +61,7 @@ __global__ void calculateDistancesCosine(InvertedIndex inverted_index, Entry *d_
 	int block_size = N / gridDim.x + (N % gridDim.x == 0 ? 0 : 1);		//Partition size
 	int lo = block_size * (blockIdx.x); 								//Beginning of the block
 	int hi = min(lo + block_size, N); 								//End of the block
-	int size = hi - lo;
+	int size = hi - lo;											// Real partition size (the last one can be smaller)
 
 	int idx = 0;
 	int end;
@@ -88,11 +88,11 @@ __global__ void calculateDistancesCosine(InvertedIndex inverted_index, Entry *d_
 
 		float norm = sqrt(inverted_index.d_norms[index_entry.doc_id]); //it's not necessary if you only need the ranking order (and not the distances)!
 
-		if (norm == 0) {
-			atomicAdd(&dist[index_entry.doc_id].distance, 0);
+		if (norm) {
+			atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
 		}
 		else {
-			atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
+			atomicAdd(&dist[index_entry.doc_id].distance, 0);
 		}
 	}
 }

@@ -49,6 +49,7 @@ struct FileStats {
 	int num_docs;
 	int num_terms;
 
+	int *doc_sizes;
 	map<int, int> doc_to_class;
 
 	FileStats() : num_docs(0), num_terms(0) {}
@@ -185,6 +186,7 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 	string line;
 
 	FileStats stats;
+	vector<int> sizes;
 
 	while (!input.eof()) {
 		getline(input, line);
@@ -195,6 +197,8 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 
 		stats.doc_to_class[doc_id] = get_class(tokens[1]);
 
+		sizes.push_back((tokens.size() - 2)/2);
+
 		for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
 			int term_id = atoi(tokens[i].c_str());
 			int term_count = atoi(tokens[i + 1].c_str());
@@ -203,6 +207,7 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 		}
 	}
 
+	stats.doc_sizes = &sizes[0];
 	input.close();
 
 	return stats;
