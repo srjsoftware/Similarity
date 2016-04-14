@@ -33,6 +33,13 @@
 #include "utils.cuh"
 
 /**
+ * Jaccard Similarity
+ */
+__host__ void jaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, int *dist, int D);
+
+__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, int *dist, int D);
+
+/**
  * Cosine similarity distance
  */
 __host__ void CosineDistance(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *dist, int D);

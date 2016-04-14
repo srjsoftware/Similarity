@@ -49,7 +49,7 @@ struct FileStats {
 	int num_docs;
 	int num_terms;
 
-	int *doc_sizes;
+	vector<int> sizes;
 	map<int, int> doc_to_class;
 
 	FileStats() : num_docs(0), num_terms(0) {}
@@ -63,7 +63,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 	string &file, float threshold, string distance, stringstream &fileout);
 bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold, 
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity* distances,
-	stringstream &fileout, DeviceVariables *dev_vars);
+	stringstream &fileout, DeviceVariables *dev_vars, int *sim);
 
 int get_class(string token);
 
@@ -186,7 +186,6 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 	string line;
 
 	FileStats stats;
-	vector<int> sizes;
 
 	while (!input.eof()) {
 		getline(input, line);
@@ -197,7 +196,7 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 
 		stats.doc_to_class[doc_id] = get_class(tokens[1]);
 
-		sizes.push_back((tokens.size() - 2)/2);
+		stats.sizes.push_back((tokens.size() - 2)/2);
 
 		for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
 			int term_id = atoi(tokens[i].c_str());
@@ -207,7 +206,6 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 		}
 	}
 
-	stats.doc_sizes = &sizes[0];
 	input.close();
 
 	return stats;
@@ -252,36 +250,37 @@ void updateStatsMaxFeatureTest(FileStats &stats, vector<string>& inputs) {
    }
 }
 
-void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** distances){
-
-	//int KK = 1;    //Obtain the smallest power of 2 greater than K (facilitates the sorting algorithm)
-	//while (KK < K) KK <<= 1;
-
+void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** distances, int **sim){
 	dim3 grid, threads;
 
 	get_grid_config(grid, threads);
 
-	gpuAssert(cudaMalloc(&dev_vars->d_dist, num_docs * sizeof(Similarity)));
-	//gpuAssert(cudaMalloc(&dev_vars->d_nearestK, KK * grid.x * sizeof(Similarity)));
-	gpuAssert(cudaMalloc(&dev_vars->d_query, biggestQuerySize * sizeof(Entry)));
+	gpuAssert(cudaMalloc(&dev_vars->d_dist, num_docs * sizeof(Similarity))); // distance between all the docs and the query doc
+	gpuAssert(cudaMalloc(&dev_vars->d_sim, num_docs * sizeof(int))); // distance between all the docs and the query doc
+	gpuAssert(cudaMalloc(&dev_vars->d_size_doc, num_docs * sizeof(int)));
+	gpuAssert(cudaMalloc(&dev_vars->d_query, biggestQuerySize * sizeof(Entry))); // query
 	gpuAssert(cudaMalloc(&dev_vars->d_index, biggestQuerySize * sizeof(int)));
 	gpuAssert(cudaMalloc(&dev_vars->d_count, biggestQuerySize * sizeof(int)));
 	gpuAssert(cudaMalloc(&dev_vars->d_qnorms, 2 * sizeof(float)));
+	gpuAssert(cudaMalloc(&dev_vars->d_similars, num_docs * 2 * sizeof(float)));
 
-	//*k_nearest = (Similarity*)malloc(KK * grid.x * sizeof(Similarity));
 	*distances = (Similarity*)malloc(num_docs * sizeof(Similarity));
+	*sim = (int*)malloc(num_docs*sizeof(int));
 
 }
 
-void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity** distances){
+void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity** distances, int **sim){
 	cudaFree(dev_vars->d_dist);
-	//cudaFree(dev_vars->d_nearestK);
+	cudaFree(dev_vars->d_sim);
+	cudaFree(dev_vars->d_size_doc);
 	cudaFree(dev_vars->d_query);
 	cudaFree(dev_vars->d_index);
 	cudaFree(dev_vars->d_count);
 	cudaFree(dev_vars->d_qnorms);
+	cudaFree(dev_vars->d_similars);
 
 	free(*distances);
+	free(*sim);
 
 	if (omp_get_thread_num() % NUM_STREAMS == 0){
 		cudaFree(index.d_count);
@@ -302,8 +301,11 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 
 	DeviceVariables dev_vars;
 	Similarity* distances;
+	int *sim;
 
-	allocVariables(&dev_vars, threshold, index.num_docs, &distances);	
+	allocVariables(&dev_vars, threshold, index.num_docs, &distances, &sim);
+
+	cudaMemcpyAsync(dev_vars.d_size_doc, &stats.sizes[0], index.num_docs * sizeof(int), cudaMemcpyHostToDevice);
 
 	double start = gettime();
 
@@ -313,7 +315,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 		num_test_local++;
 
 		if (distance == "cosine" || distance == "both") {
-			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars)) {
+			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars, sim)) {
 				#pragma omp atomic
 				correct_cosine++;
 			}
@@ -323,7 +325,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 			}
 		}
 
-		if (distance == "l2" || distance == "both") {
+		/*if (distance == "l2" || distance == "both") {
 
 			if (makeQuery(index, stats, input_t[i], threshold, EuclideanDistance, distances, outputfile, &dev_vars)) {
 				#pragma omp atomic
@@ -344,12 +346,12 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 				#pragma omp atomic
 				wrong_l1++;
 			}
-		}
+		}*/
 
 		input_t[i].clear();
 	}
 
-	freeVariables(&dev_vars, index, &distances);
+	freeVariables(&dev_vars, index, &distances, &sim);
 	int threadid = omp_get_thread_num();
 
 	printf("Entries in device %d stream %d: %d\n", threadid / NUM_STREAMS, threadid %  NUM_STREAMS, num_test_local);
@@ -388,12 +390,11 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 
 bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold,
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity *distances,
-	stringstream &outputfile, DeviceVariables *dev_vars) {
+	stringstream &outputfile, DeviceVariables *dev_vars, int *sim) {
 
 	vector<Entry> query;
 	vector<string> tokens = split(line, ' ');
 
-	int trueclass = get_class(tokens[1]);
 	int docid = atoi(tokens[0].c_str());
 
 	for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
@@ -410,24 +411,21 @@ bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, fl
 
 	KNN(inverted_index, query, threshold, distances, distance, dev_vars, docid);
 	
-	float qnorm, qnorml1, qnorms[2];
+	int docsize = query.size();
 
-	cudaMemcpyAsync(qnorms, dev_vars->d_qnorms, 2 * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpyAsync(sim, dev_vars->d_sim, inverted_index.num_docs * sizeof(int), cudaMemcpyDeviceToHost);
 
-	// TODO modificar para outras distâncias
-	qnorm = qnorms[0];
-	qnorml1 = qnorms[1];
-	float qnormeucl = qnorm;
-	float qnormcos = sqrt(qnorm);
-	if (qnormcos == 0)qnormcos = 1; //avoid NaN
+	/*for (int i = docid + 1; i < inverted_index.num_docs; i++) {
+		float jac = sim[i] / (float) (docsize + stats.sizes[i] - sim[i]);
+		// float dice = 2 * sim[i] / (docsize + stats.sizes[i]);
+		// float cosine = sim[i] / sqrt((double) (docsize + stats.sizes[i]));
 
-	for (int i = docid + 1; i < inverted_index.num_docs; i++) {
-		if (distances[i].distance/qnormcos > threshold) {
+		if (jac > threshold) {
 #if OUTPUT
-			outputfile << "(" << docid << ", " << distances[i].doc_id << "): " << distances[i].distance/qnormcos << endl;
+			outputfile << "(" << docid << ", " << i << "): " << jac << endl;
 #endif
 		}
-	}
+	}*/
 
 	return 0;
 }

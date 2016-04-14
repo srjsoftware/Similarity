@@ -20,6 +20,92 @@
 
 #include "cuda_distances.cuh"
 
+__host__ void jaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, int *dist, int D) {
+	dim3 grid, threads;
+	get_grid_config(grid, threads);
+
+	calculateJaccardSimilarity << <grid, threads >> >(inverted_index, d_query, index, dist, D);
+}
+
+__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, int *dist, int D) {
+	__shared__ int N;
+
+	if (threadIdx.x == 0) {
+		N = index[D - 1];	//Total number of items to be queried
+	}
+	__syncthreads();
+
+	int block_size = N / gridDim.x + (N % gridDim.x == 0 ? 0 : 1);		//Partition size
+	int lo = block_size * (blockIdx.x); 								//Beginning of the block
+	int hi = min(lo + block_size, N); 								//End of the block
+	int size = hi - lo;											// Real partition size (the last one can be smaller)
+
+	int idx = 0;
+	int end;
+
+	for (int i = threadIdx.x; i < size; i += blockDim.x) {
+		int pos = i + lo;
+
+		while (true) {
+			end = index[idx];
+
+			if (end <= pos) {
+				idx++;
+			}
+			else {
+				break;
+			}
+		}
+
+		Entry entry = d_query[idx]; 		//finds out the term
+		int offset = end - pos;
+
+		int idx2 = inverted_index.d_index[entry.term_id] - offset;
+		Entry index_entry = inverted_index.d_inverted_index[idx2];
+
+		//float norm = sqrt(inverted_index.d_norms[index_entry.doc_id]); //it's not necessary if you only need the ranking order (and not the distances)!
+
+		//if (0) {
+			//atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
+		///}
+		//else {
+			atomicAdd(&dist[index_entry.doc_id], 1);
+		//}
+	}
+}
+
+/*
+__device__ void calculateDistancesDevice(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *dist, int D) {
+	//__shared__ int N;
+	//__shared__ int documents_by_block
+	__shared__ int block_beginnig;
+	__shared__ int block_end;
+
+	if(threadIdx.x == 0) {
+		//N = index[D - 1]; //Total number of items to be queried
+		//documents_by_block = index[blockIdx.x] - (blockIdx.x == 0? 0: index[blockIdx.x - 1]); //Total number of items to be queried by this block
+		block_beginnig = blockIdx.x == 0? 0: index[blockIdx.x - 1]; // Beginning of the block
+		block_end = index[blockIdx.x];	// Block's end
+	}
+	__syncthreads();
+
+	//int document_per_thread = N / blockDim.x + (N % blockDim.x == 0 ? 0 : 1); // numbers of documents by thread
+	Entry entry = d_query[blockIdx.x]; // find the term
+
+	for(int i = block_beginning + threadIdx.x; i < block_end; i += blockDim.x) {
+		// obter item
+		Entry index_entry = inverted_index.d_inverted_index[i];
+		// calcular norm
+		float norm = sqrt(inverted_index.d_norms[index_entry.doc_id]);
+		// somar na distância
+		atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
+	}
+}
+
+
+ */
+
+
 __host__ void CosineDistance(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *dist, int D) {
 	dim3 grid, threads;
 	get_grid_config(grid, threads);
@@ -86,14 +172,14 @@ __global__ void calculateDistancesCosine(InvertedIndex inverted_index, Entry *d_
 		int idx2 = inverted_index.d_index[entry.term_id] - offset;
 		Entry index_entry = inverted_index.d_inverted_index[idx2];
 
-		float norm = sqrt(inverted_index.d_norms[index_entry.doc_id]); //it's not necessary if you only need the ranking order (and not the distances)!
+		//float norm = sqrt(inverted_index.d_norms[index_entry.doc_id]); //it's not necessary if you only need the ranking order (and not the distances)!
 
-		if (norm) {
-			atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
-		}
-		else {
-			atomicAdd(&dist[index_entry.doc_id].distance, 0);
-		}
+		//if (0) {
+			//atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
+		///}
+		//else {
+			atomicAdd(&dist[index_entry.doc_id].distance, 1);
+		//}
 	}
 }
 
