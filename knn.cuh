@@ -37,7 +37,7 @@ __global__ void bitonicPartialSort(Similarity *dist, Similarity *nearestK, int N
 //__global__ void get_term_count_and_tf_idf(InvertedIndex inverted_index, Entry *query, int *count, float *qnorm, float *qnorml1, int N);
 __global__ void get_term_count_and_tf_idf(InvertedIndex inverted_index, Entry *query, int *count, int N);
 
-__host__ Similarity* KNN(InvertedIndex inverted_index, std::vector<Entry> &query, float threshold, Similarity* h_nearestK,
+__host__ int KNN(InvertedIndex inverted_index, std::vector<Entry> &query, float threshold, Similarity* h_nearestK,
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), struct DeviceVariables *dev_vars, int docid);
 
 __device__ void bitonicPartialSort(Similarity *dist, int N, int K);
@@ -48,6 +48,6 @@ __device__ void initDistances(Similarity *dist, int offset, int N);
 
 __device__ void calculateDistancesDevice(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *dist, int D);
 
-__global__ void filter_registers(int *sim, float threshold, int querysize, int docid, int N, int *doc_size, float *similars);
+__global__ void filter_registers(int *sim, float threshold, int querysize, int docid, int N, int *doc_size, Similarity *similars);
 
 #endif /* KNN_CUH_ */

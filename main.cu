@@ -63,7 +63,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 	string &file, float threshold, string distance, stringstream &fileout);
 bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold, 
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity* distances,
-	stringstream &fileout, DeviceVariables *dev_vars, int *sim);
+	stringstream &fileout, DeviceVariables *dev_vars);
 
 int get_class(string token);
 
@@ -250,37 +250,45 @@ void updateStatsMaxFeatureTest(FileStats &stats, vector<string>& inputs) {
    }
 }
 
-void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** distances, int **sim){
+void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** distances){
 	dim3 grid, threads;
 
 	get_grid_config(grid, threads);
 
 	gpuAssert(cudaMalloc(&dev_vars->d_dist, num_docs * sizeof(Similarity))); // distance between all the docs and the query doc
-	gpuAssert(cudaMalloc(&dev_vars->d_sim, num_docs * sizeof(int))); // distance between all the docs and the query doc
-	gpuAssert(cudaMalloc(&dev_vars->d_size_doc, num_docs * sizeof(int)));
+	gpuAssert(cudaMalloc(&dev_vars->d_result, num_docs * sizeof(Similarity))); // compacted similarities between all the docs and the query doc
+	gpuAssert(cudaMalloc(&dev_vars->d_sim, num_docs * sizeof(int))); // count of elements in common
+	gpuAssert(cudaMalloc(&dev_vars->d_size_doc, num_docs * sizeof(int))); // size of all docs
 	gpuAssert(cudaMalloc(&dev_vars->d_query, biggestQuerySize * sizeof(Entry))); // query
 	gpuAssert(cudaMalloc(&dev_vars->d_index, biggestQuerySize * sizeof(int)));
 	gpuAssert(cudaMalloc(&dev_vars->d_count, biggestQuerySize * sizeof(int)));
-	gpuAssert(cudaMalloc(&dev_vars->d_qnorms, 2 * sizeof(float)));
-	gpuAssert(cudaMalloc(&dev_vars->d_similars, num_docs * 2 * sizeof(float)));
+	//gpuAssert(cudaMalloc(&dev_vars->d_qnorms, 2 * sizeof(float)));
+	//gpuAssert(cudaMalloc(&dev_vars->d_similars, num_docs * 2 * sizeof(float)));
 
 	*distances = (Similarity*)malloc(num_docs * sizeof(Similarity));
-	*sim = (int*)malloc(num_docs*sizeof(int));
+
+	int blocksize = 512;
+	int numBlocks = num_docs / blocksize + (num_docs % blocksize ? 1 : 0);
+
+	gpuAssert(cudaMalloc(&dev_vars->d_bC,sizeof(int)*numBlocks));
+	gpuAssert(cudaMalloc(&dev_vars->d_bO,sizeof(int)*numBlocks));
 
 }
 
-void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity** distances, int **sim){
+void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity** distances){
 	cudaFree(dev_vars->d_dist);
+	cudaFree(dev_vars->d_result);
 	cudaFree(dev_vars->d_sim);
 	cudaFree(dev_vars->d_size_doc);
 	cudaFree(dev_vars->d_query);
 	cudaFree(dev_vars->d_index);
 	cudaFree(dev_vars->d_count);
-	cudaFree(dev_vars->d_qnorms);
-	cudaFree(dev_vars->d_similars);
+	//cudaFree(dev_vars->d_qnorms);
+	//cudaFree(dev_vars->d_similars);
+	cudaFree(dev_vars->d_bC);
+	cudaFree(dev_vars->d_bO);
 
 	free(*distances);
-	free(*sim);
 
 	if (omp_get_thread_num() % NUM_STREAMS == 0){
 		cudaFree(index.d_count);
@@ -301,9 +309,8 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 
 	DeviceVariables dev_vars;
 	Similarity* distances;
-	int *sim;
 
-	allocVariables(&dev_vars, threshold, index.num_docs, &distances, &sim);
+	allocVariables(&dev_vars, threshold, index.num_docs, &distances);
 
 	cudaMemcpyAsync(dev_vars.d_size_doc, &stats.sizes[0], index.num_docs * sizeof(int), cudaMemcpyHostToDevice);
 
@@ -315,7 +322,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 		num_test_local++;
 
 		if (distance == "cosine" || distance == "both") {
-			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars, sim)) {
+			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars)) {
 				#pragma omp atomic
 				correct_cosine++;
 			}
@@ -351,7 +358,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 		input_t[i].clear();
 	}
 
-	freeVariables(&dev_vars, index, &distances, &sim);
+	freeVariables(&dev_vars, index, &distances);
 	int threadid = omp_get_thread_num();
 
 	printf("Entries in device %d stream %d: %d\n", threadid / NUM_STREAMS, threadid %  NUM_STREAMS, num_test_local);
@@ -360,8 +367,8 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 
 	double end = gettime();
 
-	#pragma omp master
-	printf("Total num tests %d\n", num_tests);
+	//#pragma omp master
+	//printf("Total num tests %d\n", num_tests);
 
 	#pragma omp master
 	{
@@ -390,7 +397,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 
 bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold,
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity *distances,
-	stringstream &outputfile, DeviceVariables *dev_vars, int *sim) {
+	stringstream &outputfile, DeviceVariables *dev_vars) {
 
 	vector<Entry> query;
 	vector<string> tokens = split(line, ' ');
@@ -409,23 +416,13 @@ bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, fl
 		query.push_back(Entry(0, 0, 0));
 	}
 
-	KNN(inverted_index, query, threshold, distances, distance, dev_vars, docid);
-	
-	int docsize = query.size();
+	int totalSimilars = KNN(inverted_index, query, threshold, distances, distance, dev_vars, docid);
 
-	//cudaMemcpyAsync(sim, dev_vars->d_sim, inverted_index.num_docs * sizeof(int), cudaMemcpyDeviceToHost);
-
-	/*for (int i = docid + 1; i < inverted_index.num_docs; i++) {
-		float jac = sim[i] / (float) (docsize + stats.sizes[i] - sim[i]);
-		// float dice = 2 * sim[i] / (docsize + stats.sizes[i]);
-		// float cosine = sim[i] / sqrt((double) (docsize + stats.sizes[i]));
-
-		if (jac > threshold) {
+	for (int i = 0; i < totalSimilars; i++) {
 #if OUTPUT
-			outputfile << "(" << docid << ", " << i << "): " << jac << endl;
+		outputfile << "(" << docid << ", " << distances[i].doc_id << "): " << distances[i].distance << endl;
 #endif
-		}
-	}*/
+	}
 
 	return 0;
 }
