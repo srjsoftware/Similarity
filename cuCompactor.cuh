@@ -137,8 +137,8 @@ int compact2(T* d_input, T* d_output, int length, Predicate predicate, int block
 	compactK<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
 
 
-	gpuAssert(cudaMemcpy(&lastCount, d_BlocksCount + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToHost)); // copies only the last position
-	gpuAssert(cudaMemcpy(&lastSum, d_BlocksOffset + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToHost));
+	gpuAssert(cudaMemcpyAsync(&lastCount, d_BlocksCount + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToHost)); // copies only the last position
+	gpuAssert(cudaMemcpyAsync(&lastSum, d_BlocksOffset + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToHost));
 
 	return lastSum + lastCount;
 }

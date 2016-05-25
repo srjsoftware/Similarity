@@ -53,20 +53,20 @@ struct is_bigger_than_threshold
 };
 
 
-/*__host__ int findSimilars(InvertedIndex inverted_index, float threshold, struct DeviceVariables *dev_vars, Similarity* distances,
+__host__ int findSimilars(InvertedIndex inverted_index, float threshold, struct DeviceVariables *dev_vars, Similarity* distances,
 		int docid, int querystart, int querysize) {
 
 	dim3 grid, threads;
 	get_grid_config(grid, threads);
 
-	int num_docs = inverted_index.num_docs - docid;
+	int num_docs = inverted_index.num_docs - docid - 1;
 	int *d_count = dev_vars->d_count, *d_index = dev_vars->d_index, *d_sim = dev_vars->d_sim, *size_doc = dev_vars->d_size_doc;
 	int *d_BlocksCount = dev_vars->d_bC, *d_BlocksOffset = dev_vars->d_bO;
 	Entry *d_query = inverted_index.d_entries + querystart;
 	Similarity *d_similarity = dev_vars->d_dist, *d_result = dev_vars->d_result;
 
 	//gpuAssert(cudaMemcpyAsync(d_query, &query[0], querysize*sizeof(Entry), cudaMemcpyHostToDevice));
-	gpuAssert(cudaMemset(d_sim + docid, 0, num_docs*sizeof(int)));
+	gpuAssert(cudaMemset(d_sim + docid + 1, 0, num_docs*sizeof(int)));
 
 	//get_term_count_and_tf_idf << <grid, threads >> >(inverted_index, d_query, d_count, d_qnorm, d_qnorml1, query.size());
 	get_term_count_and_tf_idf<<<grid, threads>>>(inverted_index, d_query, d_count, querysize);
@@ -82,12 +82,12 @@ struct is_bigger_than_threshold
 	int blocksize = 512;
 	int numBlocks = cuCompactor::divup(num_docs, blocksize);
 
-	int totalSimilars = cuCompactor::compact2<Similarity>(d_similarity + docid, d_result, num_docs, is_bigger_than_threshold(threshold), blocksize, numBlocks, d_BlocksCount, d_BlocksOffset);
+	int totalSimilars = cuCompactor::compact2<Similarity>(d_similarity + docid + 1, d_result, num_docs, is_bigger_than_threshold(threshold), blocksize, numBlocks, d_BlocksCount, d_BlocksOffset);
 
 	if (totalSimilars) cudaMemcpyAsync(distances, d_result, sizeof(Similarity)*totalSimilars, cudaMemcpyDeviceToHost);
 
 	return totalSimilars;
-}*
+}
 
 
 /*
@@ -130,6 +130,12 @@ __host__ int KNN(InvertedIndex inverted_index, vector<Entry> &query, float thres
 	return totalSimilars;
 }
 
+__global__ void printQuery(Entry *query, int querysize) {
+	if (threadIdx.x < querysize) {
+		printf("%d ", query[threadIdx.x].term_id);
+	}
+}
+
 __global__ void get_term_count_and_tf_idf(InvertedIndex inverted_index, Entry *query, int *count, int N) {
 	int block_size = N / gridDim.x + (N % gridDim.x == 0 ? 0 : 1);		//Partition size
 	int offset = block_size * (blockIdx.x); 				//Beginning of the block
@@ -151,10 +157,10 @@ __global__ void get_term_count_and_tf_idf(InvertedIndex inverted_index, Entry *q
 }
 
 __global__ void filter_registers(int *sim, float threshold, int querysize, int docid, int N, int *doc_size, Similarity *similars) { // similars + id_doc
-	N -= docid;
+	N -= (docid + 1);
 	int block_size = N / gridDim.x + (N % gridDim.x == 0 ? 0 : 1);		//Partition size
-	int offset = block_size * (blockIdx.x) + docid; 				//Beginning of the block
-	int lim = min(offset + block_size, N + docid); 					//End of the block
+	int offset = block_size * (blockIdx.x) + docid + 1; 				//Beginning of the block
+	int lim = min(offset + block_size, N + docid + 1); 					//End of the block
 	int size = lim - offset;
 
 	similars += offset;

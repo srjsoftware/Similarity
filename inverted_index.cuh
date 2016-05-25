@@ -39,18 +39,20 @@ struct InvertedIndex {
     Entry *d_inverted_index;	//Inverted index
     float *d_norms;				//Cosine and L2 Norms of the input documents
     float *d_normsl1;			//L1 Norms of the input documents
+    Entry *d_entries;
 
     int num_docs;				//Number of documents
     int num_entries;			//Number of entries
     int num_terms;				//Number of terms
 
     __host__ __device__ InvertedIndex(Entry *d_inverted_index = NULL, int *d_index = NULL, int *d_count = NULL,
-        float *d_norms = NULL, float *d_normsl1 = NULL, int num_docs = 0, int num_entries = 0, int num_terms = 0) :
+        float *d_norms = NULL, float *d_normsl1 = NULL, Entry *d_entries = NULL, int num_docs = 0, int num_entries = 0, int num_terms = 0) :
         d_inverted_index(d_inverted_index),
         d_index(d_index),
         d_count(d_count),
         d_norms(d_norms),
         d_normsl1(d_normsl1),
+        d_entries(d_entries),
         num_docs(num_docs),
         num_entries(num_entries),
         num_terms(num_terms)

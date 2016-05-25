@@ -68,9 +68,8 @@ __host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<E
 	double end = gettime();
 
 	#pragma omp single nowait
-	printf("time for insertion: %lf\n", end - start);
-	cudaFree(d_entries);
-	return InvertedIndex(d_inverted_index, d_index, d_count, d_norms, d_normsl1, num_docs, entries.size(), num_terms);
+	printf("Time for insertion: %lf\n", end - start);
+	return InvertedIndex(d_inverted_index, d_index, d_count, d_norms, d_normsl1, d_entries, num_docs, entries.size(), num_terms);
 }
 
 __global__ void count_occurrences(Entry *entries, int *count, int n) {

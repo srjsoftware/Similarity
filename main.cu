@@ -49,21 +49,19 @@ struct FileStats {
 	int num_docs;
 	int num_terms;
 
-	vector<int> sizes;
+	vector<int> sizes; // tamanho dos conjuntos
 	map<int, int> doc_to_class;
+	vector<int> start; // onde cada conjunto começa em entries
 
 	FileStats() : num_docs(0), num_terms(0) {}
 };
 
-FileStats readInput1(string &file, vector<Entry> &entries);
-void readInput2(string &filename, vector<string>& inputs);
-void updateStatsMaxFeatureTest(FileStats &stats, vector<string>& inputs);
-
+FileStats readInputFile(string &file, vector<Entry> &entries, vector<string>& inputs);
 void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& input,
 	string &file, float threshold, string distance, stringstream &fileout);
 bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold, 
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity* distances,
-	stringstream &fileout, DeviceVariables *dev_vars);
+	stringstream &fileout, DeviceVariables *dev_vars, int docid);
 
 int get_class(string token);
 
@@ -80,16 +78,16 @@ int biggestQuerySize = -1;
 
 int main(int argc, char **argv) {
 
-	if (argc != 7) {
-		cerr << "Wrong parameters. Correct usage: <executable> <input_file1> <input_file2> <threshold> <cosine | l2 | l1> <output_file> <number_of_gpus>" << endl;
+	if (argc != 6) {
+		cerr << "Wrong parameters. Correct usage: <executable> <input_file> <threshold> <cosine | l2 | l1> <output_file> <number_of_gpus>" << endl;
 		exit(1);
 	}
 
 	int gpuNum;
 	cudaGetDeviceCount(&gpuNum);
 
-	if (gpuNum > atoi(argv[6])){
-		gpuNum = atoi(argv[6]);
+	if (gpuNum > atoi(argv[5])){
+		gpuNum = atoi(argv[5]);
 		if (gpuNum < 1)
 			gpuNum = 1;
 	}
@@ -102,10 +100,10 @@ int main(int argc, char **argv) {
 
 #if OUTPUT
 	//truncate output files
-	ofstream ofsf(argv[5], ofstream::trunc);
+	ofstream ofsf(argv[4], ofstream::trunc);
 	ofsf.close();
 
-	ofstream ofsfileoutput(argv[5], ofstream::out | ofstream::app);
+	ofstream ofsfileoutput(argv[4], ofstream::out | ofstream::app);
 #endif
 	vector<string> inputs;// to read the whole test file in memory
 	vector<InvertedIndex> indexes;
@@ -113,16 +111,13 @@ int main(int argc, char **argv) {
 
 	double starts, ends;
 
-	string input1FileName(argv[1]);
-	string input2FileName(argv[2]);
+	string inputFileName(argv[1]);
 
-	printf("Reading files...\n");
+	printf("Reading file...\n");
 	vector<Entry> entries;
 
 	starts = gettime();
-	FileStats stats = readInput1(input1FileName, entries);
-	readInput2(input2FileName, inputs);
-	updateStatsMaxFeatureTest(stats, inputs);
+	FileStats stats = readInputFile(inputFileName, entries, inputs);
 	ends = gettime();
 
 	printf("Time taken: %lf seconds\n", ends - starts);
@@ -155,12 +150,12 @@ int main(int argc, char **argv) {
 		int cpuid = omp_get_thread_num();
 		cudaSetDevice(cpuid / NUM_STREAMS);
 
-		float threshold = atof(argv[3]);
-		string distanceFunction(argv[4]);
+		float threshold = atof(argv[2]);
+		string distanceFunction(argv[3]);
 
 		FileStats lstats = stats;
 
-		processTestFile(indexes[cpuid / NUM_STREAMS], lstats, inputs, input2FileName, threshold,
+		processTestFile(indexes[cpuid / NUM_STREAMS], lstats, inputs, inputFileName, threshold,
 			distanceFunction, *outputString[cpuid]);
 		if (cpuid %  NUM_STREAMS == 0)
 			gpuAssert(cudaDeviceReset());
@@ -181,22 +176,35 @@ int main(int argc, char **argv) {
 		return 0;
 }
 
-FileStats readInput1(string &filename, vector<Entry> &entries) {
+FileStats readInputFile(string &filename, vector<Entry> &entries, vector<string>& inputs) {
 	ifstream input(filename.c_str());
 	string line;
 
 	FileStats stats;
+	int accumulatedsize = 0;
 
 	while (!input.eof()) {
 		getline(input, line);
 		if (line == "") continue;
 
-		int doc_id = stats.num_docs++;
+		inputs.push_back(line);
+		num_tests++;
+	}
+
+	stats.num_docs = num_tests;
+
+	for (int doc_id = 0; doc_id < num_tests; doc_id++) {
+		line = inputs[doc_id];
+
 		vector<string> tokens = split(line, ' ');
+		biggestQuerySize = max((int)tokens.size() / 2, biggestQuerySize);
+
+		int size = (tokens.size() - 2)/2;
+		stats.sizes.push_back(size);
+		stats.start.push_back(accumulatedsize); // TODO: salvar na stats ou outro lugar
+		accumulatedsize += size;
 
 		stats.doc_to_class[doc_id] = get_class(tokens[1]);
-
-		stats.sizes.push_back((tokens.size() - 2)/2);
 
 		for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
 			int term_id = atoi(tokens[i].c_str());
@@ -209,45 +217,6 @@ FileStats readInput1(string &filename, vector<Entry> &entries) {
 	input.close();
 
 	return stats;
-}
-
-void readInput2(string &filename, vector<string>& inputs) {
-	ifstream input(filename.c_str());
-	string line;
-
-	while (!input.eof()) {
-		getline(input, line);
-		if (line == "") continue;
-		num_tests++;
-		inputs.push_back(line);
-	}
-}
-
-void updateStatsMaxFeatureTest(FileStats &stats, vector<string>& inputs) {
-
-	#pragma omp parallel num_threads(4)
-   {
-	   int localBiggest = -1;
-	   int localNumterms = stats.num_terms;
-		#pragma omp for
-	   for (int i = 0; i < inputs.size(); i++) {
-
-		   vector<string> tokens = split(inputs[i], ' ');
-
-		   localBiggest = max((int)tokens.size() / 2, localBiggest);
-		   for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
-			   int term_id = atoi(tokens[i].c_str());
-			   localNumterms = max(localNumterms, term_id + 1);
-		   }
-	   }
-
-		#pragma omp critical
-		{
-			stats.num_terms = max(localNumterms, stats.num_terms);
-			biggestQuerySize = max(biggestQuerySize, localBiggest);
-		}
-
-   }
 }
 
 void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** distances){
@@ -317,12 +286,12 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 	double start = gettime();
 
 	#pragma omp for
-	for (i = 0; i < input_t.size(); i++){
+	for (i = 0; i < index.num_docs - 1; i++){
 
 		num_test_local++;
 
 		if (distance == "cosine" || distance == "both") {
-			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars)) {
+			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars, i)) {
 				#pragma omp atomic
 				correct_cosine++;
 			}
@@ -332,30 +301,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 			}
 		}
 
-		/*if (distance == "l2" || distance == "both") {
-
-			if (makeQuery(index, stats, input_t[i], threshold, EuclideanDistance, distances, outputfile, &dev_vars)) {
-				#pragma omp atomic
-				correct_l2++;
-			}
-			else {
-				#pragma omp atomic
-				wrong_l2++;
-			}
-		}
-
-		if (distance == "l1" || distance == "both") {
-			if (makeQuery(index, stats, input_t[i], threshold, ManhattanDistance, distances, outputfile, &dev_vars)) {
-				#pragma omp atomic
-				correct_l1++;
-			}
-			else {
-				#pragma omp atomic
-				wrong_l1++;
-			}
-		}*/
-
-		input_t[i].clear();
+		//input_t[i].clear();
 	}
 
 	freeVariables(&dev_vars, index, &distances);
@@ -397,26 +343,9 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 
 bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold,
 	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity *distances,
-	stringstream &outputfile, DeviceVariables *dev_vars) {
+	stringstream &outputfile, DeviceVariables *dev_vars, int docid) {
 
-	vector<Entry> query;
-	vector<string> tokens = split(line, ' ');
-
-	int docid = atoi(tokens[0].c_str());
-
-	for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
-		int term_id = atoi(tokens[i].c_str());
-		int term_count = atoi(tokens[i + 1].c_str());
-
-		query.push_back(Entry(0, term_id, term_count));
-	}
-
-	//Creates an empty document if there are no terms
-	if (query.empty()) {
-		query.push_back(Entry(0, 0, 0));
-	}
-
-	int totalSimilars = KNN(inverted_index, query, threshold, distances, distance, dev_vars, docid);
+	int totalSimilars = findSimilars(inverted_index, threshold, dev_vars, distances, docid, stats.start[docid], stats.sizes[docid]);
 
 	for (int i = 0; i < totalSimilars; i++) {
 #if OUTPUT
