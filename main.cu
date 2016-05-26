@@ -41,6 +41,7 @@
 
 
 #define OUTPUT 1
+#define NUM_STREAMS 1
 
 
 using namespace std;
@@ -56,14 +57,9 @@ struct FileStats {
 	FileStats() : num_docs(0), num_terms(0) {}
 };
 
-FileStats readInputFile(string &file, vector<Entry> &entries, vector<string>& inputs);
-void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& input,
-	string &file, float threshold, string distance, stringstream &fileout);
-bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold, 
-	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity* distances,
-	stringstream &fileout, DeviceVariables *dev_vars, int docid);
-
-int get_class(string token);
+FileStats readInputFile(string &file, vector<Entry> &entries);
+void processTestFile(InvertedIndex &index, FileStats &stats, string &file, float threshold,
+		string distance, stringstream &fileout);
 
 
 /**
@@ -71,8 +67,6 @@ int get_class(string token);
  */
 
 static int num_tests = 0;
-static int correct_l2 = 0, correct_cosine = 0, correct_l1 = 0;
-static int wrong_l2 = 0, wrong_cosine = 0, wrong_l1 = 0;
 int biggestQuerySize = -1;
 
 
@@ -94,7 +88,7 @@ int main(int argc, char **argv) {
 	cerr << "Using " << gpuNum << "GPUs" << endl;
 
 	// we use 2 streams per GPU
-	int numThreads = gpuNum* NUM_STREAMS;
+	int numThreads = gpuNum*NUM_STREAMS;
 
 	omp_set_num_threads(numThreads);
 
@@ -117,11 +111,10 @@ int main(int argc, char **argv) {
 	vector<Entry> entries;
 
 	starts = gettime();
-	FileStats stats = readInputFile(inputFileName, entries, inputs);
+	FileStats stats = readInputFile(inputFileName, entries);
 	ends = gettime();
 
 	printf("Time taken: %lf seconds\n", ends - starts);
-	//fprintf(stderr,"sizeof Entry %u , sizeof Similarity %u\n",sizeof(Entry), sizeof(Similarity));
 
 	vector<stringstream*> outputString;
 	//Each thread builds an output string, so it can be flushed at once at the end of the program
@@ -155,7 +148,7 @@ int main(int argc, char **argv) {
 
 		FileStats lstats = stats;
 
-		processTestFile(indexes[cpuid / NUM_STREAMS], lstats, inputs, inputFileName, threshold,
+		processTestFile(indexes[cpuid / NUM_STREAMS], lstats, inputFileName, threshold,
 			distanceFunction, *outputString[cpuid]);
 		if (cpuid %  NUM_STREAMS == 0)
 			gpuAssert(cudaDeviceReset());
@@ -176,26 +169,19 @@ int main(int argc, char **argv) {
 		return 0;
 }
 
-FileStats readInputFile(string &filename, vector<Entry> &entries, vector<string>& inputs) {
+FileStats readInputFile(string &filename, vector<Entry> &entries) {
 	ifstream input(filename.c_str());
 	string line;
 
 	FileStats stats;
 	int accumulatedsize = 0;
+	int doc_id = 0;
 
 	while (!input.eof()) {
 		getline(input, line);
 		if (line == "") continue;
 
-		inputs.push_back(line);
 		num_tests++;
-	}
-
-	stats.num_docs = num_tests;
-
-	for (int doc_id = 0; doc_id < num_tests; doc_id++) {
-		line = inputs[doc_id];
-
 		vector<string> tokens = split(line, ' ');
 		biggestQuerySize = max((int)tokens.size() / 2, biggestQuerySize);
 
@@ -204,15 +190,16 @@ FileStats readInputFile(string &filename, vector<Entry> &entries, vector<string>
 		stats.start.push_back(accumulatedsize); // TODO: salvar na stats ou outro lugar
 		accumulatedsize += size;
 
-		stats.doc_to_class[doc_id] = get_class(tokens[1]);
-
 		for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
 			int term_id = atoi(tokens[i].c_str());
 			int term_count = atoi(tokens[i + 1].c_str());
 			stats.num_terms = max(stats.num_terms, term_id + 1);
 			entries.push_back(Entry(doc_id, term_id, term_count));
 		}
+		doc_id++;
 	}
+
+	stats.num_docs = num_tests;
 
 	input.close();
 
@@ -268,10 +255,10 @@ void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity**
 	}
 }
 
-void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& input_t,
-	string &filename, float threshold, string distance, stringstream &outputfile) {
+void processTestFile(InvertedIndex &index, FileStats &stats, string &filename, float threshold,
+		string distance, stringstream &outputfile) {
 
-	int num_test_local = 0, i;
+	int num_test_local = 0, docid;
 
 	//#pragma omp single nowait
 	printf("Processing input file %s...\n", filename.c_str());
@@ -286,22 +273,19 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 	double start = gettime();
 
 	#pragma omp for
-	for (i = 0; i < index.num_docs - 1; i++){
+	for (docid = 0; docid < index.num_docs - 1; docid++){
 
 		num_test_local++;
 
 		if (distance == "cosine" || distance == "both") {
-			if (makeQuery(index, stats, input_t[i], threshold, CosineDistance, distances, outputfile, &dev_vars, i)) {
-				#pragma omp atomic
-				correct_cosine++;
-			}
-			else {
-				#pragma omp atomic
-				wrong_cosine++;
+			int totalSimilars = findSimilars(index, threshold, &dev_vars, distances, docid, stats.start[docid], stats.sizes[docid]);
+
+			for (int i = 0; i < totalSimilars; i++) {
+#if OUTPUT
+				outputfile << "(" << docid << ", " << distances[i].doc_id << "): " << distances[i].distance << endl;
+#endif
 			}
 		}
-
-		//input_t[i].clear();
 	}
 
 	freeVariables(&dev_vars, index, &distances);
@@ -319,50 +303,6 @@ void processTestFile(InvertedIndex &index, FileStats &stats, vector<string>& inp
 	#pragma omp master
 	{
 		printf("Time taken for %d queries: %lf seconds\n\n", num_tests, end - start);
-
-		if (distance == "cosine" || distance == "both") {
-			printf("Cosine similarity\n");
-			printf("Correct: %d Wrong: %d\n", correct_cosine, wrong_cosine);
-			printf("Accuracy: %lf%%\n\n", double(correct_cosine) / double(num_tests));
-		}
-
-		if (distance == "l2" || distance == "both") {
-			printf("L2 distance\n");
-			printf("Correct: %d Wrong: %d\n", correct_l2, wrong_l2);
-			printf("Accuracy: %lf%%\n\n", double(correct_l2) / double(num_tests));
-		}
-
-		if (distance == "l1" || distance == "both") {
-			printf("L1 distance\n");
-			printf("Correct: %d Wrong: %d\n", correct_l1, wrong_l1);
-			printf("Accuracy: %lf%%\n\n", double(correct_l1) / double(num_tests));
-		}
 	}
 
-}
-
-bool makeQuery(InvertedIndex &inverted_index, FileStats &stats, string &line, float threshold,
-	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), Similarity *distances,
-	stringstream &outputfile, DeviceVariables *dev_vars, int docid) {
-
-	int totalSimilars = findSimilars(inverted_index, threshold, dev_vars, distances, docid, stats.start[docid], stats.sizes[docid]);
-
-	for (int i = 0; i < totalSimilars; i++) {
-#if OUTPUT
-		outputfile << "(" << docid << ", " << distances[i].doc_id << "): " << distances[i].distance << endl;
-#endif
-	}
-
-	return 0;
-}
-
-int get_class(string token) {
-	vector<string> class_tokens = split(token, '=');
-
-	if (class_tokens.size() == 1) {
-		return atoi(class_tokens[0].c_str());
-	}
-	else {
-		return atoi(class_tokens[1].c_str());
-	}
 }
