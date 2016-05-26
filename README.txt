@@ -1,5 +1,5 @@
 The latest version of this package can be downloaded from
-https://sourceforge.net/projects/gtknn/
+https://github.com/srjsoftware/Similarity
 
 Copyright (C) 2016 by Sidney Ribeiro Junior
 
