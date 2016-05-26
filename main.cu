@@ -226,7 +226,7 @@ void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Si
 	int blocksize = 512;
 	int numBlocks = num_docs / blocksize + (num_docs % blocksize ? 1 : 0);
 
-	gpuAssert(cudaMalloc(&dev_vars->d_bC,sizeof(int)*numBlocks));
+	gpuAssert(cudaMalloc(&dev_vars->d_bC,sizeof(int)*(numBlocks + 1)));
 	gpuAssert(cudaMalloc(&dev_vars->d_bO,sizeof(int)*numBlocks));
 
 }

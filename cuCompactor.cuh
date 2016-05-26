@@ -125,7 +125,7 @@ template <typename T,typename Predicate>
 int compact2(T* d_input, T* d_output, int length, Predicate predicate, int blockSize, int numBlocks, int* d_BlocksCount, int* d_BlocksOffset){
 	thrust::device_ptr<int> thrustPrt_bCount(d_BlocksCount);
 	thrust::device_ptr<int> thrustPrt_bOffset(d_BlocksOffset);
-	int lastSum = 0, lastCount = 0;
+	int lastSum[2];
 
 	//phase1
 	computeBlockCounts<<<numBlocks,blockSize>>>(d_input,length,d_BlocksCount,predicate);
@@ -136,11 +136,10 @@ int compact2(T* d_input, T* d_output, int length, Predicate predicate, int block
 	//cudaDeviceSynchronize();
 	compactK<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);
 
+	gpuAssert(cudaMemcpyAsync(d_BlocksCount + numBlocks, d_BlocksOffset + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToDevice));
+	gpuAssert(cudaMemcpyAsync(lastSum, d_BlocksCount + numBlocks - 1, 2*sizeof(int), cudaMemcpyDeviceToHost)); // copies only the last position
 
-	gpuAssert(cudaMemcpyAsync(&lastCount, d_BlocksCount + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToHost)); // copies only the last position
-	gpuAssert(cudaMemcpyAsync(&lastSum, d_BlocksOffset + numBlocks - 1, sizeof(int), cudaMemcpyDeviceToHost));
-
-	return lastSum + lastCount;
+	return lastSum[0] + lastSum[1];
 }
 
 } /* namespace cuCompactor */

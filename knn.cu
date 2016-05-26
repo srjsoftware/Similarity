@@ -65,10 +65,8 @@ __host__ int findSimilars(InvertedIndex inverted_index, float threshold, struct 
 	Entry *d_query = inverted_index.d_entries + querystart;
 	Similarity *d_similarity = dev_vars->d_dist, *d_result = dev_vars->d_result;
 
-	//gpuAssert(cudaMemcpyAsync(d_query, &query[0], querysize*sizeof(Entry), cudaMemcpyHostToDevice));
 	gpuAssert(cudaMemset(d_sim + docid + 1, 0, num_docs*sizeof(int)));
 
-	//get_term_count_and_tf_idf << <grid, threads >> >(inverted_index, d_query, d_count, d_qnorm, d_qnorml1, query.size());
 	get_term_count_and_tf_idf<<<grid, threads>>>(inverted_index, d_query, d_count, querysize);
 
 	thrust::device_ptr<int> thrust_d_count(d_count);
