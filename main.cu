@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
 		if (gpuNum < 1)
 			gpuNum = 1;
 	}
-	cerr << "Using " << gpuNum << "GPUs" << endl;
+	//cerr << "Using " << gpuNum << "GPUs" << endl;
 
 	// we use 2 streams per GPU
 	int numThreads = gpuNum*NUM_STREAMS;
@@ -223,7 +223,7 @@ void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Si
 
 	*distances = (Similarity*)malloc(num_docs * sizeof(Similarity));
 
-	int blocksize = 512;
+	int blocksize = 1024;
 	int numBlocks = num_docs / blocksize + (num_docs % blocksize ? 1 : 0);
 
 	gpuAssert(cudaMalloc(&dev_vars->d_bC,sizeof(int)*(numBlocks + 1)));

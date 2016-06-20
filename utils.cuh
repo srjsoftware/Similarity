@@ -33,7 +33,7 @@
 #include <vector>
 #include <omp.h>
 
-#define NUM_STREAMS 2
+#define NUM_STREAMS 1
 
 extern int WARP_SIZE;
 using namespace std;

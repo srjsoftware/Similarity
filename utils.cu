@@ -108,9 +108,9 @@ void get_grid_config(dim3 &grid, dim3 &threads) {
 		cudaGetDeviceProperties(&devProp, omp_get_thread_num() / NUM_STREAMS);
 
 		//Adjust the grid dimensions based on the device properties
-		int num_blocks = 2 * devProp.multiProcessorCount;
+		int num_blocks = devProp.multiProcessorCount;
 		lgrid = dim3(num_blocks);
-		lthreads = dim3(devProp.maxThreadsPerBlock / 4);
+		lthreads = dim3(devProp.maxThreadsPerBlock);
 		//lgrid = dim3(8);
 		//lthreads = dim3(512);
 		flag = 1;

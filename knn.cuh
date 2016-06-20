@@ -40,9 +40,6 @@ __global__ void get_term_count_and_tf_idf(InvertedIndex inverted_index, Entry *q
 __host__ int findSimilars(InvertedIndex inverted_index, float threshold, struct DeviceVariables *dev_vars, Similarity* distances,
 		int docid, int querystart, int querysize);
 
-__host__ int KNN(InvertedIndex inverted_index, std::vector<Entry> &query, float threshold, Similarity* h_nearestK,
-	void(*distance)(InvertedIndex, Entry*, int*, Similarity*, int D), struct DeviceVariables *dev_vars, int docid);
-
 __device__ void bitonicPartialSort(Similarity *dist, int N, int K);
 
 __device__ void bitonicPartialMerge(Similarity *dist, Similarity *nearestK, int N, int K);
