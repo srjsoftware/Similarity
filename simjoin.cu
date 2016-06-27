@@ -33,7 +33,7 @@
 #include <set>
 #include <functional>
 
-#include "knn.cuh"
+#include "simjoin.cuh"
 #include "structs.cuh"
 #include "utils.cuh"
 #include "inverted_index.cuh"

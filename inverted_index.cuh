@@ -59,7 +59,7 @@ struct InvertedIndex {
     {}
 };
 
-__host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, std::vector<Entry> &entries);
+__host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, std::vector<Entry> &entries, std::vector<Entry> &entriesfull);
 
 __global__ void count_occurrences(Entry *entries, int *count, int n);
 

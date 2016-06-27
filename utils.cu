@@ -127,6 +127,11 @@ void __gpuAssert(cudaError_t stat, int line, string file) {
 	}
 }
 
+int get_midprefix_jaccard(int size, float threshold) {
+	float minoverlap = (threshold*size*2)/(1 + threshold);
+	return size - ceil(minoverlap) + 1;
+}
+
 //__device__ float atomicAdd(float* address, float val)
 //{
 //    unsigned long long int* address_as_ull =

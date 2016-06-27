@@ -36,7 +36,7 @@
 #include "structs.cuh"
 #include "utils.cuh"
 #include "inverted_index.cuh"
-#include "knn.cuh"
+#include "simjoin.cuh"
 #include "cuda_distances.cuh"
 
 
@@ -57,7 +57,7 @@ struct FileStats {
 	FileStats() : num_docs(0), num_terms(0) {}
 };
 
-FileStats readInputFile(string &file, vector<Entry> &entries);
+FileStats readInputFile(string &file, vector<Entry> &entries, vector<Entry> &entriesmid, float threshold);
 void processTestFile(InvertedIndex &index, FileStats &stats, string &file, float threshold,
 		string distance, stringstream &fileout);
 
@@ -109,9 +109,11 @@ int main(int argc, char **argv) {
 
 	printf("Reading file...\n");
 	vector<Entry> entries;
+	vector<Entry> entriesmid;
+	float threshold = atof(argv[2]);
 
 	starts = gettime();
-	FileStats stats = readInputFile(inputFileName, entries);
+	FileStats stats = readInputFile(inputFileName, entries, entriesmid, threshold);
 	ends = gettime();
 
 	printf("Time taken: %lf seconds\n", ends - starts);
@@ -130,7 +132,7 @@ int main(int argc, char **argv) {
 		double start, end;
 
 		start = gettime();
-		indexes[cpuid] = make_inverted_index(stats.num_docs, stats.num_terms, entries);
+		indexes[cpuid] = make_inverted_index(stats.num_docs, stats.num_terms, entriesmid, entries);
 		end = gettime();
 
 		#pragma omp single nowait
@@ -138,12 +140,12 @@ int main(int argc, char **argv) {
 	}
 
 
-	#pragma omp parallel 
+	#pragma omp parallel
 	{
 		int cpuid = omp_get_thread_num();
 		cudaSetDevice(cpuid / NUM_STREAMS);
 
-		float threshold = atof(argv[2]);
+
 		string distanceFunction(argv[3]);
 
 		FileStats lstats = stats;
@@ -169,7 +171,7 @@ int main(int argc, char **argv) {
 		return 0;
 }
 
-FileStats readInputFile(string &filename, vector<Entry> &entries) {
+FileStats readInputFile(string &filename, vector<Entry> &entries, vector<Entry> &entriesmid, float threshold) {
 	ifstream input(filename.c_str());
 	string line;
 
@@ -190,11 +192,17 @@ FileStats readInputFile(string &filename, vector<Entry> &entries) {
 		stats.start.push_back(accumulatedsize); // TODO: salvar na stats ou outro lugar
 		accumulatedsize += size;
 
+		int midprefix = get_midprefix_jaccard(size, threshold);
+
 		for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
 			int term_id = atoi(tokens[i].c_str());
 			int term_count = atoi(tokens[i + 1].c_str());
 			stats.num_terms = max(stats.num_terms, term_id + 1);
 			entries.push_back(Entry(doc_id, term_id, term_count));
+
+			if (i + 1 < midprefix) {
+				entriesmid.push_back(Entry(doc_id, term_id, term_count));
+			}
 		}
 		doc_id++;
 	}

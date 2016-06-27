@@ -24,10 +24,10 @@
 #include "inverted_index.cuh"
 #include "utils.cuh"
 
-__host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<Entry> &entries) {
+__host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<Entry> &entries, vector<Entry> &entriesfull) {
 	#pragma omp single nowait
 	printf("Creating inverted index... \n");
-	Entry *d_entries, *d_inverted_index;
+	Entry *d_entries, *d_entriesfull, *d_inverted_index;
 	int *d_count, *d_index;
 	float *d_norms, *d_normsl1;
 
@@ -36,6 +36,7 @@ __host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<E
 
 	gpuAssert(cudaMalloc(&d_inverted_index, entries.size() * sizeof(Entry)));
 	gpuAssert(cudaMalloc(&d_entries, entries.size() * sizeof(Entry)));
+	gpuAssert(cudaMalloc(&d_entriesfull, entriesfull.size() * sizeof(Entry)));
 	gpuAssert(cudaMalloc(&d_index, num_terms * sizeof(int)));
 	gpuAssert(cudaMalloc(&d_count, num_terms * sizeof(int)));
 	gpuAssert(cudaMalloc(&d_norms, num_docs * sizeof(float)));
@@ -45,6 +46,8 @@ __host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<E
 	gpuAssert(cudaMemset(d_norms, 0, num_docs * sizeof(float)));
 	gpuAssert(cudaMemset(d_normsl1, 0, num_docs * sizeof(float)));
 	gpuAssert(cudaMemcpy(d_entries, &entries[0], entries.size() * sizeof(Entry), cudaMemcpyHostToDevice));
+	gpuAssert(cudaMemcpy(d_entriesfull, &entriesfull[0], entriesfull.size() * sizeof(Entry), cudaMemcpyHostToDevice));
+
 
 	#pragma omp single nowait
 	printf("Finished allocating\n");
@@ -69,7 +72,8 @@ __host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<E
 
 	#pragma omp single nowait
 	printf("Time for insertion: %lf\n", end - start);
-	return InvertedIndex(d_inverted_index, d_index, d_count, d_norms, d_normsl1, d_entries, num_docs, entries.size(), num_terms);
+	cudaFree(d_entries);
+	return InvertedIndex(d_inverted_index, d_index, d_count, d_norms, d_normsl1, d_entriesfull, num_docs, entries.size(), num_terms);
 }
 
 __global__ void count_occurrences(Entry *entries, int *count, int n) {
