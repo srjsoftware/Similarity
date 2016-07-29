@@ -35,7 +35,7 @@
 /**
  * Jaccard Similarity
  */
-__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, int *dist, int D, int docid);
+__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *d_sim, int D, int docid, int *sizedoc, int maxsize, float threshold, int *ft_i, int *ft_j);
 
 /**
  * Cosine similarity distance

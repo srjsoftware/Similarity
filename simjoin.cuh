@@ -38,7 +38,20 @@ __global__ void bitonicPartialSort(Similarity *dist, Similarity *nearestK, int N
 __global__ void get_term_count_and_tf_idf(InvertedIndex inverted_index, Entry *query, int *count, int N);
 
 __host__ int findSimilars(InvertedIndex inverted_index, float threshold, struct DeviceVariables *dev_vars, Similarity* distances,
-		int docid, int querystart, int querysize);
+		int docid, int queryqtt);
+
+__host__ int findSimilars2(InvertedIndex inverted_index, float threshold, struct DeviceVariables *dev_vars, Similarity* distances,
+		int docid, int queryqtt);
+
+__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *d_sim, int D, int docid, int *sizedoc, int maxsize, float threshold, int *ft_i, int *ft_j);
+
+__global__ void verify_candidates2(Entry *d_query, int querysize, int *doc_start, int *size_docs, Entry *entries, Similarity *d_similarity, int candidates_num, float threshold, int *ft_i, int *ft_j);
+
+__global__ void verify_candidates(Entry *d_query, int *doc_start, int *size_docs, Similarity *d_similarity, int candidates_num, float threshold);
+
+__global__ void candidateFiltering(InvertedIndex inverted_index, Entry *d_query, Similarity *d_candidates, int begin, int query_qtt, int *docstart, int *docsizes, float threshold);
+
+__global__ void calculateIntersection(InvertedIndex inverted_index, Entry *d_query, Similarity *d_candidates, int begin, int query_qtt, int *docstart, int *docsizes, float threshold);
 
 __device__ void bitonicPartialSort(Similarity *dist, int N, int K);
 

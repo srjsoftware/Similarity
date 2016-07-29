@@ -12,6 +12,7 @@
 #include <thrust/device_vector.h>
 #include "cuda_error_check.cu"
 
+
 namespace cuCompactor {
 
 #define warpSize (32)
@@ -132,6 +133,7 @@ int compact2(T* d_input, T* d_output, int length, Predicate predicate, int block
 	//phase2
 	//cudaDeviceSynchronize();
 	thrust::exclusive_scan(thrustPrt_bCount, thrustPrt_bCount + numBlocks, thrustPrt_bOffset);
+
 	//phase3
 	//cudaDeviceSynchronize();
 	compactK<<<numBlocks,blockSize,sizeof(int)*(blockSize/warpSize)>>>(d_input,length,d_output,d_BlocksOffset,predicate);

@@ -192,16 +192,16 @@ FileStats readInputFile(string &filename, vector<Entry> &entries, vector<Entry> 
 		stats.start.push_back(accumulatedsize); // TODO: salvar na stats ou outro lugar
 		accumulatedsize += size;
 
-		int midprefix = get_midprefix_jaccard(size, threshold);
+		int midprefix = get_midprefix(size, threshold);
 
-		for (int i = 2, size = tokens.size(); i + 1 < size; i += 2) {
+		for (int i = 2, size = tokens.size(), j = 0; i + 1 < size; i += 2, j++) {
 			int term_id = atoi(tokens[i].c_str());
 			int term_count = atoi(tokens[i + 1].c_str());
 			stats.num_terms = max(stats.num_terms, term_id + 1);
-			entries.push_back(Entry(doc_id, term_id, term_count));
+			entries.push_back(Entry(doc_id, term_id, term_count, j));
 
-			if (i + 1 < midprefix) {
-				entriesmid.push_back(Entry(doc_id, term_id, term_count));
+			if (j < midprefix + 1) {
+				entriesmid.push_back(Entry(doc_id, term_id, term_count, j));
 			}
 		}
 		doc_id++;
@@ -214,25 +214,19 @@ FileStats readInputFile(string &filename, vector<Entry> &entries, vector<Entry> 
 	return stats;
 }
 
-void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** distances){
+void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Similarity** h_similarity, int batch) {
 	dim3 grid, threads;
 
 	get_grid_config(grid, threads);
 
-	gpuAssert(cudaMalloc(&dev_vars->d_dist, num_docs * sizeof(Similarity))); // distance between all the docs and the query doc
-	gpuAssert(cudaMalloc(&dev_vars->d_result, num_docs * sizeof(Similarity))); // compacted similarities between all the docs and the query doc
-	gpuAssert(cudaMalloc(&dev_vars->d_sim, num_docs * sizeof(int))); // count of elements in common
-	gpuAssert(cudaMalloc(&dev_vars->d_size_doc, num_docs * sizeof(int))); // size of all docs
-	gpuAssert(cudaMalloc(&dev_vars->d_query, biggestQuerySize * sizeof(Entry))); // query
-	gpuAssert(cudaMalloc(&dev_vars->d_index, biggestQuerySize * sizeof(int)));
-	gpuAssert(cudaMalloc(&dev_vars->d_count, biggestQuerySize * sizeof(int)));
-	//gpuAssert(cudaMalloc(&dev_vars->d_qnorms, 2 * sizeof(float)));
-	//gpuAssert(cudaMalloc(&dev_vars->d_similars, num_docs * 2 * sizeof(float)));
-
-	*distances = (Similarity*)malloc(num_docs * sizeof(Similarity));
+	gpuAssert(cudaMalloc(&dev_vars->d_candidates, batch*num_docs * sizeof(Similarity))); // distance between all the docs and the query doc
+	gpuAssert(cudaMalloc(&dev_vars->d_result, batch*num_docs * sizeof(Similarity))); // compacted similarities between all the docs and the query doc
+	gpuAssert(cudaMalloc(&dev_vars->d_docstarts, num_docs * sizeof(int))); // count of elements in common
+	gpuAssert(cudaMalloc(&dev_vars->d_docsizes, num_docs * sizeof(int))); // size of all docs
+	*h_similarity = (Similarity*)malloc(batch*num_docs * sizeof(Similarity));
 
 	int blocksize = 1024;
-	int numBlocks = num_docs / blocksize + (num_docs % blocksize ? 1 : 0);
+	int numBlocks = num_docs*batch / blocksize + (num_docs*batch % blocksize ? 1 : 0);
 
 	gpuAssert(cudaMalloc(&dev_vars->d_bC,sizeof(int)*(numBlocks + 1)));
 	gpuAssert(cudaMalloc(&dev_vars->d_bO,sizeof(int)*numBlocks));
@@ -240,15 +234,10 @@ void allocVariables(DeviceVariables *dev_vars, float threshold, int num_docs, Si
 }
 
 void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity** distances){
-	cudaFree(dev_vars->d_dist);
+	cudaFree(dev_vars->d_candidates);
 	cudaFree(dev_vars->d_result);
-	cudaFree(dev_vars->d_sim);
-	cudaFree(dev_vars->d_size_doc);
-	cudaFree(dev_vars->d_query);
-	cudaFree(dev_vars->d_index);
-	cudaFree(dev_vars->d_count);
-	//cudaFree(dev_vars->d_qnorms);
-	//cudaFree(dev_vars->d_similars);
+	cudaFree(dev_vars->d_docstarts);
+	cudaFree(dev_vars->d_docsizes);
 	cudaFree(dev_vars->d_bC);
 	cudaFree(dev_vars->d_bO);
 
@@ -258,45 +247,43 @@ void freeVariables(DeviceVariables *dev_vars, InvertedIndex &index, Similarity**
 		cudaFree(index.d_count);
 		cudaFree(index.d_index);
 		cudaFree(index.d_inverted_index);
-		cudaFree(index.d_norms);
-		cudaFree(index.d_normsl1);
 	}
 }
 
 void processTestFile(InvertedIndex &index, FileStats &stats, string &filename, float threshold,
 		string distance, stringstream &outputfile) {
 
-	int num_test_local = 0, docid;
-
 	//#pragma omp single nowait
 	printf("Processing input file %s...\n", filename.c_str());
 
 	DeviceVariables dev_vars;
-	Similarity* distances;
+	Similarity* h_result;
+	int batch = 500;
 
-	allocVariables(&dev_vars, threshold, index.num_docs, &distances);
+	allocVariables(&dev_vars, threshold, index.num_docs, &h_result, batch);
 
-	cudaMemcpyAsync(dev_vars.d_size_doc, &stats.sizes[0], index.num_docs * sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpyAsync(dev_vars.d_docsizes, &stats.sizes[0], index.num_docs * sizeof(int), cudaMemcpyHostToDevice);
+	cudaMemcpyAsync(dev_vars.d_docstarts, &stats.start[0], index.num_docs * sizeof(int), cudaMemcpyHostToDevice);
 
 	double start = gettime();
+	int num_test_local = 0;
 
 	#pragma omp for
-	for (docid = 0; docid < index.num_docs - 1; docid++){
+	for (int docid = 0; docid < index.num_docs - 1; docid += batch) {
 
-		num_test_local++;
+		int totalSimilars = findSimilars(index, threshold, &dev_vars, h_result, docid, batch);
+		num_test_local += batch;
 
-		if (distance == "cosine" || distance == "both") {
-			int totalSimilars = findSimilars(index, threshold, &dev_vars, distances, docid, stats.start[docid], stats.sizes[docid]);
-
-			for (int i = 0; i < totalSimilars; i++) {
+		for (int i = 0; i < totalSimilars; i++) {
 #if OUTPUT
-				outputfile << "(" << docid << ", " << distances[i].doc_id << "): " << distances[i].distance << endl;
-#endif
+			if (h_result[i].similarity >= threshold) {
+				outputfile << "(" << h_result[i].doc_i  << ", " << h_result[i].doc_j << "): " << h_result[i].similarity << endl;
 			}
+#endif
 		}
 	}
 
-	freeVariables(&dev_vars, index, &distances);
+	freeVariables(&dev_vars, index, &h_result);
 	int threadid = omp_get_thread_num();
 
 	printf("Entries in device %d stream %d: %d\n", threadid / NUM_STREAMS, threadid %  NUM_STREAMS, num_test_local);
@@ -310,7 +297,7 @@ void processTestFile(InvertedIndex &index, FileStats &stats, string &filename, f
 
 	#pragma omp master
 	{
-		printf("Time taken for %d queries: %lf seconds\n\n", num_tests, end - start);
+		printf("Time taken for %d queries: %lf seconds\n\n", stats.num_docs, end - start);
 	}
 
 }

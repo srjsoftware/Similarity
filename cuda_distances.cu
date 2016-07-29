@@ -21,7 +21,7 @@
 #include "cuda_distances.cuh"
 
 
-__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, int *dist, int D, int docid) {
+__global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *d_sim, int D, int docid, int *sizedoc, int maxsize, float threshold, int *ft_i, int *ft_j) {
 	__shared__ int N;
 
 	if (threadIdx.x == 0) {
@@ -36,6 +36,7 @@ __global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *
 
 	int idx = 0;
 	int end;
+	int minoverlap, rem;
 
 	for (int i = threadIdx.x; i < size; i += blockDim.x) {
 		int pos = i + lo;
@@ -56,14 +57,25 @@ __global__ void calculateJaccardSimilarity(InvertedIndex inverted_index, Entry *
 
 		int idx2 = inverted_index.d_index[entry.term_id] - offset;
 		Entry index_entry = inverted_index.d_inverted_index[idx2];
+		int entry_size = sizedoc[index_entry.doc_id];
 
-		if (index_entry.doc_id > docid) {
-			atomicAdd(&dist[index_entry.doc_id], 1);
+		if (index_entry.doc_id > docid && entry_size <= maxsize) {
+			minoverlap = (threshold * ((float ) (entry_size + sizedoc[docid])))/(1 + threshold);
+			rem = d_sim[index_entry.doc_id].similarity + entry_size - index_entry.pos;
+
+			if (rem < minoverlap || d_sim[index_entry.doc_id].similarity + sizedoc[docid] - entry.ft_i < minoverlap) {
+				d_sim[index_entry.doc_id].similarity = -1000000;
+			} else {
+				atomicAdd(&d_sim[index_entry.doc_id].similarity, 1);
+				if (!d_sim[index_entry.doc_id].doc_j) d_sim[index_entry.doc_id].doc_j = index_entry.doc_id;
+				ft_i[index_entry.doc_id] = index_entry.pos;
+				ft_j[index_entry.doc_id] = entry.pos;
+			}
 		}
 	}
 }
 
-__host__ void CosineDistance(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *dist, int D) {
+/*__host__ void CosineDistance(InvertedIndex inverted_index, Entry *d_query, int *index, Similarity *dist, int D) {
 	dim3 grid, threads;
 	get_grid_config(grid, threads);
 
@@ -135,7 +147,7 @@ __global__ void calculateDistancesCosine(InvertedIndex inverted_index, Entry *d_
 			//atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf * index_entry.tf_idf) / norm);
 		///}
 		//else {
-			atomicAdd(&dist[index_entry.doc_id].distance, 1);
+			atomicAdd(&dist[index_entry.doc_id].similarity, 1);
 		//}
 	}
 }
@@ -232,7 +244,7 @@ __global__ void calculateDistancesEuclidean(InvertedIndex inverted_index, Entry 
 		Entry index_entry = inverted_index.d_inverted_index[idx2];
 
 		//(a-b)^2 = a^2-2ab+b^2.   Since we already have the norms, we just need to compute the 2ab
-		atomicAdd(&dist[index_entry.doc_id].distance, 2.0 * (entry.tf_idf * index_entry.tf_idf));
+		atomicAdd(&dist[index_entry.doc_id].similarity, 2.0 * (entry.ft_i * index_entry.ft_i));
 	}
 }
 
@@ -280,6 +292,6 @@ __global__ void calculateDistancesManhattan(InvertedIndex inverted_index, Entry 
 
 
 		//we only need to compute the subtraction of the common dimensions. We can infer the remaining calculations from the norms.
-		atomicAdd(&dist[index_entry.doc_id].distance, (entry.tf_idf + index_entry.tf_idf) - abs(entry.tf_idf - index_entry.tf_idf));
+		atomicAdd(&dist[index_entry.doc_id].similarity, (entry.ft_i + index_entry.ft_i) - abs(entry.ft_i - index_entry.ft_i));
 	}
 }

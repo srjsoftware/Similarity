@@ -39,12 +39,12 @@ __host__ InvertedIndex make_inverted_index(int num_docs, int num_terms, vector<E
 	gpuAssert(cudaMalloc(&d_entriesfull, entriesfull.size() * sizeof(Entry)));
 	gpuAssert(cudaMalloc(&d_index, num_terms * sizeof(int)));
 	gpuAssert(cudaMalloc(&d_count, num_terms * sizeof(int)));
-	gpuAssert(cudaMalloc(&d_norms, num_docs * sizeof(float)));
-	gpuAssert(cudaMalloc(&d_normsl1, num_docs * sizeof(float)));
+	//gpuAssert(cudaMalloc(&d_norms, num_docs * sizeof(float)));
+	//gpuAssert(cudaMalloc(&d_normsl1, num_docs * sizeof(float)));
 
 	gpuAssert(cudaMemset(d_count, 0, num_terms * sizeof(int)));
-	gpuAssert(cudaMemset(d_norms, 0, num_docs * sizeof(float)));
-	gpuAssert(cudaMemset(d_normsl1, 0, num_docs * sizeof(float)));
+	//gpuAssert(cudaMemset(d_norms, 0, num_docs * sizeof(float)));
+	//gpuAssert(cudaMemset(d_normsl1, 0, num_docs * sizeof(float)));
 	gpuAssert(cudaMemcpy(d_entries, &entries[0], entries.size() * sizeof(Entry), cudaMemcpyHostToDevice));
 	gpuAssert(cudaMemcpy(d_entriesfull, &entriesfull[0], entriesfull.size() * sizeof(Entry), cudaMemcpyHostToDevice));
 
@@ -104,11 +104,11 @@ __global__ void mount_inverted_index_and_compute_tf_idf(Entry *entries, Entry *i
 		Entry entry = entries[i];
 		int pos = atomicAdd(index + entry.term_id, 1);
 
-		entry.tf_idf = entry.tf * log(float(num_docs) / float(count[entry.term_id]));
+		//entry.tf_idf = entry.tf * log(float(num_docs) / float(count[entry.term_id]));
 		inverted_index[pos] = entry;
 
-		atomicAdd(&d_norms[entry.doc_id], pow(entry.tf_idf, 2.0f));
-		atomicAdd(&d_normsl1[entry.doc_id], entry.tf_idf);
+		//atomicAdd(&d_norms[entry.doc_id], pow(entry.tf_idf, 2.0f));
+		//atomicAdd(&d_normsl1[entry.doc_id], entry.tf_idf);
 
 	}
 }

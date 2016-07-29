@@ -127,9 +127,24 @@ void __gpuAssert(cudaError_t stat, int line, string file) {
 	}
 }
 
-int get_midprefix_jaccard(int size, float threshold) {
-	float minoverlap = (threshold*size*2)/(1 + threshold);
-	return size - ceil(minoverlap) + 1;
+float get_minoverlap_jaccard(int size_x1, int size_x2, float threshold) {
+	return (threshold*((float) size_x1 + size_x2)) / (1.0 + threshold);
+}
+
+int get_midprefix(int size, float threshold) {
+	return size - ceil(get_minoverlap_jaccard(size, size, threshold)) + 1;
+}
+
+float get_minsize_jaccard(int size, float threshold) {
+	return threshold * ((float) size);
+}
+
+int get_maxprefix(int size, float threshold) {
+	return size - ceil(get_minsize_jaccard(size, threshold)) + 1;
+}
+
+int max_size_jaccard(int size, float threshold) {
+	return ceil(((float) size)/threshold);
 }
 
 //__device__ float atomicAdd(float* address, float val)
